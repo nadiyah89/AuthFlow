@@ -4,7 +4,7 @@
 
 AuthFlow is a full-stack authentication web application built using **ASP.NET Core Web API (.NET 10)** on the backend, **React 19 + TypeScript + Vite** on the frontend, and **PostgreSQL 17** for data persistence.
 
-The application follows a clean 3-tier monolithic layered architecture designed for high maintainability, strict security, and complete clarity for technical evaluation and interviews.
+The application adheres to a clean 3-tier monolithic layered architecture designed for maintainability, high security, and clear evaluation in a technical .NET interview.
 
 ---
 
@@ -28,58 +28,104 @@ The application follows a clean 3-tier monolithic layered architecture designed 
 
 ### Educational Concepts: Interview Guide
 
-#### What is an Entity?
-An **Entity** is a C# domain class representing a business object with a distinct identity (`Id`). In EF Core, entities map directly to database tables. For example:
-- `User` represents an individual registered user in the system (`Users` table).
-- `RefreshToken` represents a temporary, rotating session credential tied to a user (`RefreshTokens` table).
+#### What is a DTO (Data Transfer Object)?
+A **DTO** is a plain object designed purely to carry data across architectural boundaries (e.g., between the HTTP client and the controller).
+- **Why not use Domain Entities directly?**
+  - **Decoupling**: Prevents leaking internal database structures (e.g. `PasswordHash`, `LockoutEndUtc`) to clients.
+  - **Over-Posting Prevention**: Prevents malicious users from submitting fields they shouldn't modify (e.g. `IsActive = true`).
+  - **Targeted Validation**: Allows DataAnnotation attributes specific to input rules (such as matching `Password` and `ConfirmPassword`) without cluttering persistent entities.
 
-#### What does `DbContext` do?
-`AppDbContext` inherits from EF Core's `DbContext`. It acts as a combination of the **Unit of Work** and **Repository** design patterns:
-1. **Connection Manager**: Opens and manages connections to the PostgreSQL database via Npgsql.
-2. **Object-Relational Mapping (ORM)**: Translates LINQ queries into raw SQL and maps SQL tabular results back into strongly-typed C# objects.
-3. **Change Tracker**: Tracks modifications (adds, updates, deletes) made to loaded entities and generates optimized transactional SQL when `SaveChangesAsync()` is invoked.
-4. **Schema Blueprint**: Configures table schemas, relationships, constraints, and indexes through `OnModelCreating` via the Fluent API.
+#### Why are Services used?
+The **Service Layer** encapsulates core business logic, domain workflows, and algorithmic rules:
+- **Separation of Concerns**: Controllers only handle HTTP concerns (status codes, headers, cookie issuance). Services handle business calculations (password hashing, credential verification, lockout logic, token generation).
+- **Reusability & Testability**: Services can be tested independently in unit or integration tests without spinning up an HTTP server.
 
-#### What do EF Core Migrations do?
-**Migrations** provide version control for the database schema:
-- When C# entity models change, running `dotnet ef migrations add <Name>` generates a C# migration script containing `Up()` and `Down()` operations.
-- `dotnet ef database update` executes the `Up()` migration against the database and records the executed version in `__EFMigrationsHistory`.
-- In AuthFlow, migrations are executed explicitly as a controlled operational step (never automatically during generic application startup) to prevent multi-instance race conditions and unexpected production schema locks.
+#### How does Dependency Injection connect Controllers and Services?
+ASP.NET Core provides an **Inversion of Control (IoC) Container**:
+1. Services are registered in DI inside `Program.cs` with specific lifetimes:
+   - `builder.Services.AddScoped<IAuthService, AuthService>();`
+   - `builder.Services.AddScoped<ITokenService, TokenService>();`
+   - `builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();`
+2. When an incoming request reaches `AuthController`, the runtime inspects its constructor:
+   ```csharp
+   public AuthController(IAuthService authService) { _authService = authService; }
+   ```
+3. The IoC container automatically resolves and injects an instance of `AuthService` (scoped to the lifetime of that specific HTTP request).
+4. This ensures loose coupling: `AuthController` depends on the abstraction `IAuthService`, not the concrete implementation.
 
-#### How does the Application connect to PostgreSQL?
-1. The application registers the `Npgsql.EntityFrameworkCore.PostgreSQL` provider in DI via `builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString))`.
-2. When database queries execute, Npgsql establishes a pooled TCP connection over port 5432, exchanges authentication credentials via SCRAM-SHA-256, and executes parameterized SQL statements.
+#### How Password Hashing Works (PBKDF2 with HMAC-SHA512)
+1. **Never Plaintext**: Plaintext passwords are never persisted or logged.
+2. **Per-User Salting**: When registering, ASP.NET Core Identity's `PasswordHasher<User>` generates a cryptographically secure 128-bit random salt for each user.
+3. **Key Derivation**: The salt and password are fed into **PBKDF2** with **HMAC-SHA512** running 100,000+ iterations.
+4. **Output Format**: The resulting hash includes the algorithm version subheader, salt, and derived key encoded in Base64:
+   ```
+   [Header: 1 byte][PRF: 4 bytes][Iteration count: 4 bytes][Salt length: 4 bytes][Salt: N bytes][Subkey: N bytes]
+   ```
+5. **Verification**: During login, the stored salt and iteration count are extracted from the stored hash and applied to the user-entered password. The results are compared using constant-time byte equality to prevent timing attacks.
 
-#### Why do Indexes and Database Constraints matter?
-- **Constraints enforce data integrity at the lowest level**: Even if an application bug bypasses validation logic, the database refuses corrupt states (e.g. `NOT NULL`, `MaxLength`, Foreign Keys).
-- **Unique Indexes prevent concurrency race conditions**: If two users simultaneously register with the same email, application-level checks might both pass, but the database's unique constraint (`IX_Users_NormalizedEmail`) guarantees that one transaction will succeed and the other will fail with a `23505 unique_violation`.
-- **Foreign Keys maintain relational integrity**: `FK_RefreshTokens_Users_UserId` ensures a refresh token cannot exist without a valid user, and `OnDelete(DeleteBehavior.Cascade)` ensures that deleting a user cleanly evicts all their active refresh tokens.
-- **Search Indexes speed up high-frequency lookups**: B-tree indexes on `NormalizedEmail`, `TokenHash`, `UserId`, and `FamilyId` turn slow full-table scans ($O(N)$) into logarithmic binary lookups ($O(\log N)$).
-
-#### How do `User` and `RefreshToken` relate?
-- The relationship is **One-to-Many**: One `User` can have multiple active or historic `RefreshToken` entries (across different devices or browsers).
-- `RefreshToken` contains a foreign key `UserId` referencing `Users.Id`.
-- In C#:
-  - `User.RefreshTokens` is a collection navigation property (`ICollection<RefreshToken>`).
-  - `RefreshToken.User` is a reference navigation property pointing back to the parent `User`.
-- `DeleteBehavior.Cascade` guarantees that if a user account is deleted, all their refresh tokens are purged in the same database transaction.
+#### How JWT Authentication Works
+1. **Access Token Generation**:
+   - `TokenService` creates a signed JSON Web Token (JWT) using `HmacSha256` and the application's symmetric secret key.
+   - Claims embedded: `sub` (User Id), `email`, `jti` (unique token id), and `name`.
+   - Lifespan: Short-lived (15 minutes).
+2. **Transmission**: Sent in the JSON response body and retained in React in-memory state.
+3. **Verification**: ASP.NET Core's `JwtBearerHandler` intercepts requests with `Authorization: Bearer <token>`, verifies the cryptographic HMAC signature, validates issuer and audience, and rejects expired tokens (`ClockSkew = TimeSpan.Zero`).
 
 ---
 
-## 3. Database Schema Specification
+## 3. Request Lifecycle Walkthroughs
+
+### Walkthrough 1: How Registration Travels Through All Layers
+1. **Client**: User submits full name, email, and password. React dispatches `POST /api/auth/register`.
+2. **Reverse Proxy**: Vercel/Vite proxy forwards the request to `/api/auth/register`.
+3. **Global Exception & Rate Limiter**: Rate limiting policy (`auth-limit`) verifies IP throughput.
+4. **Model Binding & Validation**: ASP.NET Core binds the JSON body to `RegisterRequestDto`. DataAnnotation attributes enforce email format and password matching. If invalid, ASP.NET Core returns `400 Bad Request` immediately.
+5. **Controller Layer**: `AuthController.Register` delegates to `_authService.RegisterAsync(request)`.
+6. **Business Layer (`AuthService`)**:
+   - Normalizes email (`Trim().ToUpperInvariant()`).
+   - Checks if `_context.Users.AnyAsync(u => u.NormalizedEmail == normalizedEmail)`. If duplicate, returns `409 Conflict`.
+   - Hashes password using `_passwordHasher.HashPassword(user, request.Password)`.
+   - Generates high-entropy refresh token and computes its SHA-256 hash.
+   - Saves `User` and `RefreshToken` entities to PostgreSQL via `_context.SaveChangesAsync()`.
+   - Catches any concurrent database collisions (`PostgresException 23505`) and maps them to `409 Conflict`.
+   - Issues short-lived signed JWT access token via `_tokenService.GenerateAccessToken(user)`.
+7. **Controller Response**:
+   - Attaches `rawRefreshToken` as an `HttpOnly; Path=/api/auth; SameSite=Lax` cookie in the HTTP response.
+   - Returns `201 Created` with `{ accessToken, expiresInMinutes: 15, user: { id, fullName, email } }`.
+
+### Walkthrough 2: How Login Verifies Credentials
+1. **Client**: User enters email and password -> `POST /api/auth/login`.
+2. **Controller & Service**: `AuthController.Login` calls `_authService.LoginAsync(request)`.
+3. **User Lookup**: Looks up user by `NormalizedEmail`.
+   - *Account Enumeration Mitigation*: If the user does not exist, a dummy password hash verification runs to consume equivalent CPU time, then returns generic `401 Unauthorized`.
+4. **Account State Checks**:
+   - Inactive: Returns `403 Forbidden` ("Account is inactive").
+   - Locked: If `LockoutEndUtc > DateTime.UtcNow`, calculates remaining minutes and returns `423 Locked`.
+5. **Password Verification**:
+   - Verifies password with `_passwordHasher.VerifyHashedPassword`.
+   - If invalid: Increments `AccessFailedCount`. If $\ge 5$, sets `LockoutEndUtc = DateTime.UtcNow.AddMinutes(15)` and returns `423 Locked`. Otherwise returns `401 Unauthorized`.
+   - If valid: Resets `AccessFailedCount = 0` and clears `LockoutEndUtc`.
+6. **Session Creation**:
+   - Generates a new refresh token and saves its SHA-256 hash.
+   - Generates JWT access token.
+   - Attaches `HttpOnly` refresh token cookie and returns `200 OK` with user profile and access token.
+
+---
+
+## 4. Database Schema Specification
 
 ### `Users` Table
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `Id` | `uuid` | `PRIMARY KEY` | Unique user identifier. |
-| `FullName` | `character varying(100)` | `NOT NULL` | User's display name. |
+| `FullName` | `character varying(100)` | `NOT NULL` | Display name. |
 | `Email` | `character varying(256)` | `NOT NULL` | Original user-entered email. |
-| `NormalizedEmail`| `character varying(256)` | `NOT NULL, UNIQUE` | Uppercased email for case-insensitive duplicate prevention. |
-| `PasswordHash` | `text` | `NOT NULL` | PBKDF2 with HMAC-SHA512 salted password hash. |
+| `NormalizedEmail`| `character varying(256)` | `NOT NULL, UNIQUE` | Uppercased email for duplicate prevention. |
+| `PasswordHash` | `text` | `NOT NULL` | PBKDF2 with HMAC-SHA512 salted hash. |
 | `IsActive` | `boolean` | `NOT NULL, DEFAULT true` | Active account toggle. |
 | `CreatedAtUtc` | `timestamp with time zone` | `NOT NULL` | Account creation timestamp in UTC. |
 | `UpdatedAtUtc` | `timestamp with time zone` | `NOT NULL` | Account last modified timestamp in UTC. |
-| `AccessFailedCount` | `integer` | `NOT NULL, DEFAULT 0`| Counter for failed login attempts (lockout protection). |
+| `AccessFailedCount` | `integer` | `NOT NULL, DEFAULT 0`| Counter for failed login attempts. |
 | `LockoutEndUtc` | `timestamp with time zone` | `NULL` | Expiration of temporary account lockout. |
 
 ### `RefreshTokens` Table
@@ -87,31 +133,19 @@ An **Entity** is a C# domain class representing a business object with a distinc
 | :--- | :--- | :--- | :--- |
 | `Id` | `uuid` | `PRIMARY KEY` | Unique token record identifier. |
 | `UserId` | `uuid` | `NOT NULL, FK -> Users(Id)` | Owner user ID (Cascade Delete). |
-| `TokenHash` | `character varying(128)` | `NOT NULL, UNIQUE` | SHA-256 hash of the random refresh token string. |
-| `FamilyId` | `uuid` | `NOT NULL` | Identifier shared across tokens in a rotation lineage. |
+| `TokenHash` | `character varying(128)` | `NOT NULL, UNIQUE` | SHA-256 hash of random refresh token. |
+| `FamilyId` | `uuid` | `NOT NULL` | Identifier shared across tokens in a lineage. |
 | `CreatedAtUtc` | `timestamp with time zone` | `NOT NULL` | Token creation timestamp in UTC. |
 | `ExpiresAtUtc` | `timestamp with time zone` | `NOT NULL` | Token expiration timestamp in UTC. |
 | `RevokedAtUtc` | `timestamp with time zone` | `NULL` | Timestamp when revoked (null if active). |
-| `ReplacedByTokenId`| `uuid` | `NULL` | ID of the successor token issued during rotation. |
+| `ReplacedByTokenId`| `uuid` | `NULL` | ID of successor token issued during rotation. |
 
 ---
 
-## 4. Password Security & Cryptography
+## 5. Security Trade-offs & Mitigations
 
-1. **No Plaintext Storage**: Plaintext passwords are never persisted or logged.
-2. **Algorithm**: Standard ASP.NET Core Identity `PasswordHasher<User>`, utilizing **PBKDF2 (Password-Based Key Derivation Function 2)** with HMAC-SHA512.
-3. **Salting**: Generates a cryptographically secure 128-bit salt per user automatically.
-4. **Iteration Count**: Complies with modern cryptographic recommendations (100,000+ iterations), mitigating brute-force and rainbow table attacks.
-
----
-
-## 5. Token & Session Management
-
-- **Access Token (JWT)**:
-  - Lifespan: 15 minutes.
-  - Storage: In-memory React state (never in localStorage to prevent token harvesting from XSS).
-- **Refresh Token**:
-  - Lifespan: 7 days.
-  - Transmission: `HttpOnly; Secure; SameSite=Lax; Path=/api/auth` cookie (prevents direct JavaScript access).
-  - Storage: Only the SHA-256 `TokenHash` is persisted in the database; raw token values never touch persistent storage.
-  - Rotation: Each refresh exchange revokes the existing token, marks `ReplacedByTokenId`, and issues a new token in the same `FamilyId`. If an already-revoked token is presented, the entire family is immediately invalidated (reuse detection).
+1. **In-Memory JWT Access Tokens**: Mitigates Cross-Site Scripting (XSS) token harvesting by never storing access tokens in `localStorage` or `sessionStorage`.
+2. **HttpOnly Cookies for Refresh Tokens**: Protects raw refresh tokens from client-side script inspection.
+3. **Hashed Refresh Tokens**: Even if the database is compromised, attackers only obtain SHA-256 hashes of high-entropy random strings, which cannot be converted back into valid cookies.
+4. **Account Lockout & Rate Limiting**: 5 consecutive failed attempts trigger a 15-minute lockout, and built-in rate limiting restricts IP bursts on `/api/auth/*`.
+5. **Constant-Time Timing Mitigation**: Unknown emails undergo dummy password verification to neutralize timing-based user enumeration.

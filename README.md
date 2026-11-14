@@ -7,8 +7,8 @@ A modern, full-stack authentication web application demonstrating industry-stand
 - **Backend**: ASP.NET Core Web API (.NET 10, C#)
 - **Data Access**: Entity Framework Core 10, Npgsql (PostgreSQL 17)
 - **Password Security**: ASP.NET Core Identity `PasswordHasher<User>` (PBKDF2 with HMAC-SHA512)
+- **Token Security**: Signed JWT access tokens (15m) + Cryptographically secure HttpOnly Refresh-Token cookies (7d)
 - **Frontend**: React 19, TypeScript, Vite, React Router, Native Fetch API, CSS Modules
-- **Authentication Strategy**: Short-lived in-memory JWT Access Tokens + Secure HttpOnly Refresh-Token Cookies
 - **Hosting Targets**: Render (Backend), Vercel (Frontend), Managed PostgreSQL (Database)
 
 ---
@@ -21,52 +21,30 @@ AuthFlow/
 │   ├── AuthFlow.slnx
 │   ├── src/
 │   │   └── AuthFlow.Api/
-│   │       ├── Controllers/          # API endpoints (Health, Auth)
+│   │       ├── Controllers/          # AuthController (Register, Login), HealthController
 │   │       ├── Data/                 # EF Core DbContext & Migrations
-│   │       │   └── Migrations/       # 20261114134401_InitialCreate.cs
-│   │       ├── DTOs/                 # Request & Response Contracts
-│   │       ├── Middleware/           # Global Error Handling & Rate Limiting
-│   │       ├── Models/               # Domain Entities (User, RefreshToken)
-│   │       ├── Services/             # Auth, Token, and Hashing Services
+│   │       ├── DTOs/                 # RegisterRequestDto, LoginRequestDto, AuthResponseDto
+│   │       ├── Middleware/           # GlobalExceptionHandlerMiddleware
+│   │       ├── Models/               # User, RefreshToken, JwtSettings
+│   │       ├── Services/             # AuthService, TokenService
 │   │       ├── appsettings.json      # Base Configuration
 │   │       └── Program.cs            # ASP.NET Core App Bootstrap
 │   └── tests/
-│       └── AuthFlow.IntegrationTests/# Live PostgreSQL integration test suite
+│       └── AuthFlow.IntegrationTests/# 23 PostgreSQL integration & HTTP pipeline tests
 ├── frontend/
 │   ├── src/
-│   │   ├── components/           # Reusable UI & Route Guards
-│   │   ├── context/              # AuthContext & Session State
-│   │   ├── hooks/                # Custom React Hooks
-│   │   ├── pages/                # Login, Register, Dashboard Pages
-│   │   ├── services/             # Native Fetch Client & Interceptors
-│   │   ├── styles/               # CSS Modules & Global Styles
-│   │   └── types/                # TypeScript Interfaces
 │   ├── vite.config.ts            # Vite config with local /api dev proxy
 │   └── vercel.json               # Production reverse-proxy rewrites
 ├── docs/
-│   └── ARCHITECTURE.md           # Detailed Architectural Design & Learning Guide
+│   └── ARCHITECTURE.md           # Architectural Design & Interview Learning Notes
 └── .gitignore                    # Comprehensive Exclusion Rules
 ```
 
 ---
 
-## Database Management & Migrations
+## Running Automated Tests
 
-Migrations are controlled explicitly via the .NET EF CLI (not executed automatically on generic application startup):
-
-```bash
-# Add a new migration (when models change)
-dotnet ef migrations add <MigrationName> --project src/AuthFlow.Api
-
-# Apply migrations to database
-dotnet ef database update --project src/AuthFlow.Api
-```
-
----
-
-## Running Integration Tests
-
-AuthFlow includes integration tests that verify database constraints, unique indexes, cascading deletes, and UTC timestamps against live PostgreSQL:
+AuthFlow includes 23 integration and unit tests covering database constraints, cascading deletes, password hashing, JWT claims and signatures, and HTTP endpoints:
 
 ```bash
 cd backend
@@ -75,27 +53,44 @@ dotnet test
 
 ---
 
-## Local Development Setup
+## Manual API Testing Instructions
 
-### 1. Backend Setup
+### 1. Start the Backend API
 ```bash
 cd backend
-dotnet restore
-dotnet build
 dotnet run --project src/AuthFlow.Api/AuthFlow.Api.csproj
 ```
-The backend API starts on `http://localhost:5202`. Verify health check:
-```bash
-curl http://localhost:5202/api/health
-```
+The API listens on `http://localhost:5202`.
 
-### 2. Frontend Setup
+### 2. User Registration
 ```bash
-cd frontend
-npm install
-npm run dev
+curl -i -X POST http://localhost:5202/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fullName": "Jane Doe",
+    "email": "jane@example.com",
+    "password": "P@ssword123!Secure",
+    "confirmPassword": "P@ssword123!Secure"
+  }'
 ```
-The frontend dev server starts on `http://localhost:5173` with automatic `/api` proxying to `http://localhost:5202`.
+**Expected Response**: `201 Created` with JSON payload (`accessToken`, `user`) and `Set-Cookie: refreshToken=...; Path=/api/auth; HttpOnly`.
+
+### 3. User Login
+```bash
+curl -i -X POST http://localhost:5202/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "jane@example.com",
+    "password": "P@ssword123!Secure"
+  }'
+```
+**Expected Response**: `200 OK` with JSON payload (`accessToken`, `user`) and `Set-Cookie: refreshToken=...; Path=/api/auth; HttpOnly`.
+
+### 4. Duplicate Registration
+Submitting the same email again returns `409 Conflict` with `ProblemDetails`.
+
+### 5. Invalid Password
+Submitting an invalid password returns `401 Unauthorized` with generic message `Invalid email or password.`.
 
 ---
 
@@ -103,8 +98,10 @@ The frontend dev server starts on `http://localhost:5173` with automatic `/api` 
 
 - **Phase 0 (Architecture & Discovery)**: Complete & Approved.
 - **Phase 1 (Workspace & Foundation)**: Complete & Approved.
-- **Phase 2 (Database Modeling & Migrations)**: Complete.
-  - Entities defined: `User` and `RefreshToken`.
-  - `AppDbContext` configured with Npgsql and Fluent API constraints.
-  - `InitialCreate` migration generated, reviewed, and applied to `authflow_dev`.
-  - All 6 integration tests passing against live PostgreSQL.
+- **Phase 2 (Database Modeling & Migrations)**: Complete & Approved.
+- **Phase 3 (Backend Authentication — Register & Login)**: Complete.
+  - `POST /api/auth/register` with duplicate detection and concurrent DB collision handling.
+  - `POST /api/auth/login` with lockout protection and constant-time enumeration mitigation.
+  - `TokenService` issuing short-lived JWTs and cryptographically random refresh tokens.
+  - `GlobalExceptionHandlerMiddleware` returning RFC 7807 `ProblemDetails`.
+  - All 23 integration and HTTP tests passing against live PostgreSQL.

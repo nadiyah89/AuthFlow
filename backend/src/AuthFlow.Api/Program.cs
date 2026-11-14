@@ -1,24 +1,78 @@
+using System.Text;
+using System.Threading.RateLimiting;
 using AuthFlow.Api.Data;
+using AuthFlow.Api.Middleware;
 using AuthFlow.Api.Models;
+using AuthFlow.Api.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container
+// 1. Add services to the container
 builder.Services.AddControllers();
 
-// Configure EF Core with PostgreSQL
+// 2. Configure and Validate JWT Settings
+var jwtSection = builder.Configuration.GetSection(JwtSettings.SectionName);
+builder.Services.Configure<JwtSettings>(jwtSection);
+
+var jwtSettings = jwtSection.Get<JwtSettings>() ?? new JwtSettings();
+jwtSettings.Validate();
+
+// 3. Configure EF Core with PostgreSQL
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
     options.UseNpgsql(connectionString);
 });
 
-// Configure ASP.NET Core Identity Password Hasher
+// 4. Configure Identity Password Hasher & Services
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
+builder.Services.AddScoped<ITokenService, TokenService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
 
-// Configure CORS for local development
+// 5. Configure JWT Bearer Authentication
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.RequireHttpsMetadata = false; // Set to true in production via env if required
+    options.SaveToken = true;
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Secret)),
+        ValidateIssuer = true,
+        ValidIssuer = jwtSettings.Issuer,
+        ValidateAudience = true,
+        ValidAudience = jwtSettings.Audience,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.Zero
+    };
+});
+
+builder.Services.AddAuthorization();
+
+// 6. Configure Rate Limiting for Auth Endpoints
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddFixedWindowLimiter("auth-limit", policy =>
+    {
+        policy.PermitLimit = 15;
+        policy.Window = TimeSpan.FromMinutes(1);
+        policy.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+        policy.QueueLimit = 0;
+    });
+});
+
+// 7. Configure CORS for frontend access
 const string corsPolicy = "AllowFrontend";
 builder.Services.AddCors(options =>
 {
@@ -36,10 +90,19 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// 8. Configure HTTP Request Pipeline
+app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
+
 app.UseCors(corsPolicy);
 
+app.UseRateLimiter();
+
+app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapControllers();
+app.MapControllers().RequireRateLimiting("auth-limit");
 
 app.Run();
+
+public partial class Program { }
+
