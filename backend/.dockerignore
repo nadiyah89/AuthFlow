@@ -1,0 +1,13 @@
+# Docker build ignore list
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+.vscode/
+appsettings.Production.json
+appsettings.local.json
+secrets.json
+TestResults/
+*.log

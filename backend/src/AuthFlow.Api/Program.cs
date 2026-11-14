@@ -5,6 +5,7 @@ using AuthFlow.Api.Middleware;
 using AuthFlow.Api.Models;
 using AuthFlow.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -12,8 +13,24 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Render dynamic PORT support: bind to 0.0.0.0:$PORT if PORT is provided by environment
+var port = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(port))
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+}
+
 // 1. Add services to the container
 builder.Services.AddControllers();
+
+// Configure forwarded headers for Render reverse proxy (SSL termination)
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1; // Only trust the single reverse-proxy hop from Render's edge proxy
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 // 2. Configure and Validate JWT Settings
 var jwtSection = builder.Configuration.GetSection(JwtSettings.SectionName);
@@ -89,6 +106,12 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// Apply forwarded headers only in production behind Render reverse proxy
+if (!app.Environment.IsDevelopment())
+{
+    app.UseForwardedHeaders();
+}
 
 // 8. Configure HTTP Request Pipeline
 app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
