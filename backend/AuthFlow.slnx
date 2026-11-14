@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AuthFlow.Api/AuthFlow.Api.csproj" />
+  </Folder>
+</Solution>

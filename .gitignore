@@ -1,0 +1,56 @@
+# ==============================================================================
+# AuthFlow Root .gitignore
+# ==============================================================================
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.swp
+*~
+
+# Secrets & Local Environment Configs (NEVER COMMIT)
+*.env
+*.env.local
+*.env.*.local
+appsettings.Production.json
+appsettings.local.json
+appsettings.*.local.json
+secrets.json
+
+# .NET & Visual Studio build outputs
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+.vs/
+_ReSharper*/
+*.DotSettings.user
+*.nupkg
+*.snupkg
+TestResults/
+*.coverage
+
+# Node.js & Vite build outputs
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Database & local data files
+*.db
+*.sqlite
+*.sqlite-journal
+*.log
