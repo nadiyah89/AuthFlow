@@ -3,7 +3,11 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://authflow-api-placeholder.onrender.com/api/:path*"
+      "destination": "https://authflow-api-tjev.onrender.com/api/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }
