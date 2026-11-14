@@ -4,7 +4,7 @@
 
 AuthFlow is a full-stack authentication web application built using **ASP.NET Core Web API (.NET 10)** on the backend, **React 19 + TypeScript + Vite** on the frontend, and **PostgreSQL 17** for data persistence.
 
-The application adheres to a clean 3-tier monolithic layered architecture designed for maintainability, high security, and clear evaluation in a technical .NET interview.
+The application follows a clean 3-tier monolithic layered architecture designed for maintainability, high security, and clear evaluation in a technical .NET interview.
 
 ---
 
@@ -30,10 +30,9 @@ The application adheres to a clean 3-tier monolithic layered architecture design
 
 #### What is a DTO (Data Transfer Object)?
 A **DTO** is a plain object designed purely to carry data across architectural boundaries (e.g., between the HTTP client and the controller).
-- **Why not use Domain Entities directly?**
-  - **Decoupling**: Prevents leaking internal database structures (e.g. `PasswordHash`, `LockoutEndUtc`) to clients.
-  - **Over-Posting Prevention**: Prevents malicious users from submitting fields they shouldn't modify (e.g. `IsActive = true`).
-  - **Targeted Validation**: Allows DataAnnotation attributes specific to input rules (such as matching `Password` and `ConfirmPassword`) without cluttering persistent entities.
+- **Decoupling**: Prevents leaking internal database structures (e.g. `PasswordHash`, `LockoutEndUtc`) to clients.
+- **Over-Posting Prevention**: Prevents malicious users from submitting fields they shouldn't modify (e.g. `IsActive = true`).
+- **Targeted Validation**: Enables DataAnnotation attributes specific to input rules (such as matching `Password` and `ConfirmPassword`) without cluttering persistent entities.
 
 #### Why are Services used?
 The **Service Layer** encapsulates core business logic, domain workflows, and algorithmic rules:
@@ -57,11 +56,7 @@ ASP.NET Core provides an **Inversion of Control (IoC) Container**:
 1. **Never Plaintext**: Plaintext passwords are never persisted or logged.
 2. **Per-User Salting**: When registering, ASP.NET Core Identity's `PasswordHasher<User>` generates a cryptographically secure 128-bit random salt for each user.
 3. **Key Derivation**: The salt and password are fed into **PBKDF2** with **HMAC-SHA512** running 100,000+ iterations.
-4. **Output Format**: The resulting hash includes the algorithm version subheader, salt, and derived key encoded in Base64:
-   ```
-   [Header: 1 byte][PRF: 4 bytes][Iteration count: 4 bytes][Salt length: 4 bytes][Salt: N bytes][Subkey: N bytes]
-   ```
-5. **Verification**: During login, the stored salt and iteration count are extracted from the stored hash and applied to the user-entered password. The results are compared using constant-time byte equality to prevent timing attacks.
+4. **Verification**: During login, the stored salt and iteration count are extracted from the stored hash and applied to the user-entered password. The results are compared using constant-time byte equality to prevent timing attacks.
 
 #### How JWT Authentication Works
 1. **Access Token Generation**:
@@ -73,46 +68,86 @@ ASP.NET Core provides an **Inversion of Control (IoC) Container**:
 
 ---
 
-## 3. Request Lifecycle Walkthroughs
+## 3. Token Lifecycle, Rotation, and Session Management
 
-### Walkthrough 1: How Registration Travels Through All Layers
-1. **Client**: User submits full name, email, and password. React dispatches `POST /api/auth/register`.
-2. **Reverse Proxy**: Vercel/Vite proxy forwards the request to `/api/auth/register`.
-3. **Global Exception & Rate Limiter**: Rate limiting policy (`auth-limit`) verifies IP throughput.
-4. **Model Binding & Validation**: ASP.NET Core binds the JSON body to `RegisterRequestDto`. DataAnnotation attributes enforce email format and password matching. If invalid, ASP.NET Core returns `400 Bad Request` immediately.
-5. **Controller Layer**: `AuthController.Register` delegates to `_authService.RegisterAsync(request)`.
-6. **Business Layer (`AuthService`)**:
-   - Normalizes email (`Trim().ToUpperInvariant()`).
-   - Checks if `_context.Users.AnyAsync(u => u.NormalizedEmail == normalizedEmail)`. If duplicate, returns `409 Conflict`.
-   - Hashes password using `_passwordHasher.HashPassword(user, request.Password)`.
-   - Generates high-entropy refresh token and computes its SHA-256 hash.
-   - Saves `User` and `RefreshToken` entities to PostgreSQL via `_context.SaveChangesAsync()`.
-   - Catches any concurrent database collisions (`PostgresException 23505`) and maps them to `409 Conflict`.
-   - Issues short-lived signed JWT access token via `_tokenService.GenerateAccessToken(user)`.
-7. **Controller Response**:
-   - Attaches `rawRefreshToken` as an `HttpOnly; Path=/api/auth; SameSite=Lax` cookie in the HTTP response.
-   - Returns `201 Created` with `{ accessToken, expiresInMinutes: 15, user: { id, fullName, email } }`.
+### Complete Token Lifecycle
+```
+[ Client ]                        [ API / Service ]                    [ PostgreSQL ]
+   │                                     │                                    │
+   │ ── 1. POST /api/auth/login ───────► │                                    │
+   │ ◄── 2. JWT in body + Cookie ─────── │ ◄── Store Hashed Refresh Token ─── │
+   │                                     │                                    │
+   │ (15 mins later - JWT expires)       │                                    │
+   │                                     │                                    │
+   │ ── 3. POST /api/auth/refresh ─────► │ ── SELECT ... FOR UPDATE ────────► │ (Row locked)
+   │       (Cookie auto-sent)            │ ── Revoke Token ─────────────────► │
+   │                                     │ ── Insert Successor Token ───────► │
+   │ ◄── 4. New JWT + New Cookie ─────── │ ── COMMIT Transaction ───────────► │
+   │                                     │                                    │
+   │ ── 5. GET /api/auth/me ───────────► │                                    │
+   │       (Bearer <new JWT>)            │                                    │
+   │ ◄── 6. 200 OK (User Profile) ────── │                                    │
+   │                                     │                                    │
+   │ ── 7. POST /api/auth/logout ──────► │ ── Mark Token Revoked ───────────► │
+   │ ◄── 8. 200 OK + Clear Cookie ────── │                                    │
+```
 
-### Walkthrough 2: How Login Verifies Credentials
-1. **Client**: User enters email and password -> `POST /api/auth/login`.
-2. **Controller & Service**: `AuthController.Login` calls `_authService.LoginAsync(request)`.
-3. **User Lookup**: Looks up user by `NormalizedEmail`.
-   - *Account Enumeration Mitigation*: If the user does not exist, a dummy password hash verification runs to consume equivalent CPU time, then returns generic `401 Unauthorized`.
-4. **Account State Checks**:
-   - Inactive: Returns `403 Forbidden` ("Account is inactive").
-   - Locked: If `LockoutEndUtc > DateTime.UtcNow`, calculates remaining minutes and returns `423 Locked`.
-5. **Password Verification**:
-   - Verifies password with `_passwordHasher.VerifyHashedPassword`.
-   - If invalid: Increments `AccessFailedCount`. If $\ge 5$, sets `LockoutEndUtc = DateTime.UtcNow.AddMinutes(15)` and returns `423 Locked`. Otherwise returns `401 Unauthorized`.
-   - If valid: Resets `AccessFailedCount = 0` and clears `LockoutEndUtc`.
-6. **Session Creation**:
-   - Generates a new refresh token and saves its SHA-256 hash.
-   - Generates JWT access token.
-   - Attaches `HttpOnly` refresh token cookie and returns `200 OK` with user profile and access token.
+### Refresh-Token Rotation & Lineage
+Every time a refresh token is exchanged at `/api/auth/refresh`:
+1. The presented token is looked up by its SHA-256 hash using PostgreSQL row locking (`FOR UPDATE`).
+2. The current token is immediately marked as revoked (`RevokedAtUtc = DateTime.UtcNow`).
+3. A successor token is generated with a new cryptographic random string and hashed.
+4. The successor token inherits the original `FamilyId`, and the original token's `ReplacedByTokenId` points to the successor.
+5. Both updates commit in a single atomic database transaction.
+
+### Replay & Reuse Detection (Family Revocation)
+If a refresh token that has already been revoked (`RevokedAtUtc != null`) is presented at `/api/auth/refresh`:
+- The system recognizes that an old token is being replayed (which can happen if a refresh token was intercepted or stolen).
+- The service immediately invalidates the entire lineage:
+  ```csharp
+  await _context.RefreshTokens
+      .Where(t => t.FamilyId == tokenRecord.FamilyId && t.RevokedAtUtc == null)
+      .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAtUtc, DateTime.UtcNow));
+  ```
+- Any active tokens in that family (even legitimate ones) are immediately revoked, requiring the user to re-authenticate from scratch.
+
+### Concurrency Protection
+To prevent race conditions where simultaneous refresh calls (e.g. two browser tabs waking up) create multiple valid successor tokens:
+- AuthFlow uses **PostgreSQL row-level locking**:
+  ```sql
+  SELECT * FROM "RefreshTokens" WHERE "TokenHash" = @hash FOR UPDATE;
+  ```
+- The first request acquires the lock, rotates the token, and commits.
+- The second request waits for the lock, reads the updated row, sees `RevokedAtUtc != null`, and is rejected, guaranteeing that exactly **one** successor is ever created.
 
 ---
 
-## 4. Database Schema Specification
+## 4. CSRF Protection for Cookie-Authenticated Endpoints
+
+State-changing cookie-authenticated endpoints (`POST /api/auth/refresh` and `POST /api/auth/logout`) are defended through depth-in-defense:
+
+1. **Custom Request Header Requirement**:
+   - The browser must send `X-Requested-With: XMLHttpRequest` or `X-AuthFlow-Client: Web`.
+   - Cross-origin HTML forms (`<form>`) and scripts cannot send custom headers across domains without passing a preflight CORS check.
+2. **Origin & Referer Validation**:
+   - The middleware inspects `Origin` or `Referer` headers and verifies them against the configured whitelist of trusted origins (`http://localhost:5173`, production Vercel domains, etc.).
+   - Requests without origin/referer or pointing to untrusted domains are rejected with `403 Forbidden`.
+3. **SameSite=Lax Cookie Policy**:
+   - Modern browsers refuse to attach `SameSite=Lax` cookies on cross-site sub-resource requests (e.g., cross-origin `fetch` or image tags).
+4. **Middleware Ordering**:
+   ```csharp
+   app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
+   app.UseCors(corsPolicy);            // 1. CORS handles OPTIONS preflights
+   app.UseMiddleware<CsrfProtectionMiddleware>(); // 2. CSRF blocks invalid origins
+   app.UseRateLimiter();               // 3. Rate limiting restricts throughput
+   app.UseAuthentication();            // 4. JWT Authentication
+   app.UseAuthorization();             // 5. Role/Policy Authorization
+   app.MapControllers();
+   ```
+
+---
+
+## 5. Database Schema Specification
 
 ### `Users` Table
 | Column | Type | Constraints | Description |
@@ -139,13 +174,3 @@ ASP.NET Core provides an **Inversion of Control (IoC) Container**:
 | `ExpiresAtUtc` | `timestamp with time zone` | `NOT NULL` | Token expiration timestamp in UTC. |
 | `RevokedAtUtc` | `timestamp with time zone` | `NULL` | Timestamp when revoked (null if active). |
 | `ReplacedByTokenId`| `uuid` | `NULL` | ID of successor token issued during rotation. |
-
----
-
-## 5. Security Trade-offs & Mitigations
-
-1. **In-Memory JWT Access Tokens**: Mitigates Cross-Site Scripting (XSS) token harvesting by never storing access tokens in `localStorage` or `sessionStorage`.
-2. **HttpOnly Cookies for Refresh Tokens**: Protects raw refresh tokens from client-side script inspection.
-3. **Hashed Refresh Tokens**: Even if the database is compromised, attackers only obtain SHA-256 hashes of high-entropy random strings, which cannot be converted back into valid cookies.
-4. **Account Lockout & Rate Limiting**: 5 consecutive failed attempts trigger a 15-minute lockout, and built-in rate limiting restricts IP bursts on `/api/auth/*`.
-5. **Constant-Time Timing Mitigation**: Unknown emails undergo dummy password verification to neutralize timing-based user enumeration.

@@ -42,7 +42,7 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-    options.RequireHttpsMetadata = false; // Set to true in production via env if required
+    options.RequireHttpsMetadata = false; // Set to true in production if needed
     options.SaveToken = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {
@@ -65,7 +65,7 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.AddFixedWindowLimiter("auth-limit", policy =>
     {
-        policy.PermitLimit = 15;
+        policy.PermitLimit = 30;
         policy.Window = TimeSpan.FromMinutes(1);
         policy.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
         policy.QueueLimit = 0;
@@ -95,6 +95,8 @@ app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
 
 app.UseCors(corsPolicy);
 
+app.UseMiddleware<CsrfProtectionMiddleware>();
+
 app.UseRateLimiter();
 
 app.UseAuthentication();
@@ -105,4 +107,3 @@ app.MapControllers().RequireRateLimiting("auth-limit");
 app.Run();
 
 public partial class Program { }
-
