@@ -7,42 +7,41 @@ import styles from '../styles/dashboard.module.css'
 export const ProfilePage: React.FC = () => {
   const { user } = useAuth()
 
-  const formattedUtc = user?.createdAtUtc
-    ? new Date(user.createdAtUtc).toUTCString()
-    : 'Unknown'
+  const memberSince = user?.createdAtUtc
+    ? new Date(user.createdAtUtc).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      })
+    : 'Recently'
 
-  const formattedLocal = user?.createdAtUtc
-    ? new Date(user.createdAtUtc).toLocaleString()
-    : 'Unknown'
+  const initials = user?.fullName
+    ? user.fullName
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2)
+    : 'U'
 
   return (
     <>
       <Navbar />
       <main className={styles.dashboardContainer}>
         <section className={styles.card}>
-          <div className={styles.cardHeader}>
-            <div>
-              <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--color-text-main)' }}>
-                Account Profile
-              </h1>
-              <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', marginTop: '0.2rem' }}>
-                Verified account information retrieved directly from the protected <code>/api/auth/me</code> endpoint.
-              </p>
+          <div className={styles.profileHeader}>
+            <div className={styles.avatarCircle}>{initials}</div>
+            <div className={styles.profileInfo}>
+              <h1 className={styles.profileName}>{user?.fullName}</h1>
+              <p className={styles.profileEmail}>{user?.email}</p>
             </div>
-            <div className={styles.badgeSuccess} style={{ marginTop: 0 }}>
+            <div className={styles.badgeSuccess}>
               <span className={styles.statusDot} />
-              <span>Verified Identity</span>
+              <span>Active Account</span>
             </div>
           </div>
 
-          <div className={styles.infoList} style={{ marginTop: '1.5rem' }}>
-            <div className={styles.infoItem}>
-              <span className={styles.infoKey}>User Identity (ID)</span>
-              <span className={styles.infoVal} style={{ fontFamily: 'monospace' }}>
-                {user?.id}
-              </span>
-            </div>
-
+          <div className={styles.infoList}>
             <div className={styles.infoItem}>
               <span className={styles.infoKey}>Full Name</span>
               <span className={styles.infoVal}>{user?.fullName}</span>
@@ -54,24 +53,24 @@ export const ProfilePage: React.FC = () => {
             </div>
 
             <div className={styles.infoItem}>
-              <span className={styles.infoKey}>Member Since (UTC)</span>
-              <span className={styles.infoVal}>{formattedUtc}</span>
+              <span className={styles.infoKey}>Member Since</span>
+              <span className={styles.infoVal}>{memberSince}</span>
             </div>
 
             <div className={styles.infoItem}>
-              <span className={styles.infoKey}>Local Timezone Timestamp</span>
-              <span className={styles.infoVal}>{formattedLocal}</span>
-            </div>
-
-            <div className={styles.infoItem}>
-              <span className={styles.infoKey}>Session Architecture</span>
-              <span className={styles.infoVal}>
-                Access Token stored in memory only • Refresh Token in Secure HttpOnly Cookie
+              <span className={styles.infoKey}>Account Status</span>
+              <span className={styles.infoVal} style={{ color: 'var(--color-success)', fontWeight: 600 }}>
+                Active & Verified
               </span>
+            </div>
+
+            <div className={styles.infoItem}>
+              <span className={styles.infoKey}>Authentication</span>
+              <span className={styles.infoVal}>Password protected</span>
             </div>
           </div>
 
-          <div className={styles.actionRow} style={{ marginTop: '1.5rem' }}>
+          <div className={styles.actionRow} style={{ marginTop: '1.75rem' }}>
             <Link to="/dashboard" className={styles.actionBtn}>
               ← Back to Dashboard
             </Link>
