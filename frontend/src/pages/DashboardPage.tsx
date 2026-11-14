@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import styles from '../styles/dashboard.module.css'
 
 export const DashboardPage: React.FC = () => {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
 
   const memberSince = user?.createdAtUtc
     ? new Date(user.createdAtUtc).toLocaleDateString('en-US', {
@@ -52,7 +52,7 @@ export const DashboardPage: React.FC = () => {
               <span className={styles.cardIcon}>📅</span>
             </div>
             <div className={styles.cardValue}>{memberSince}</div>
-            <div className={styles.cardDesc}>Verified user account</div>
+            <div className={styles.cardDesc}>Active account</div>
           </div>
 
           <div className={styles.card}>
@@ -70,19 +70,12 @@ export const DashboardPage: React.FC = () => {
             <span className={styles.cardLabel}>Quick Actions</span>
           </div>
           <p className={styles.cardDesc} style={{ marginBottom: '1rem' }}>
-            Manage your account details or end your current session.
+            Manage your account details and profile information.
           </p>
           <div className={styles.actionRow}>
             <Link to="/profile" className={styles.actionBtn}>
               View Profile
             </Link>
-            <button
-              type="button"
-              onClick={() => logout()}
-              className={`${styles.actionBtn} ${styles.secondaryBtn}`}
-            >
-              Sign out
-            </button>
           </div>
         </section>
       </main>

@@ -8,7 +8,7 @@ export const ProtectedRoute: React.FC = () => {
   const location = useLocation()
 
   if (isLoading) {
-    return <LoadingSpinner message="Verifying authentication session..." />
+    return <LoadingSpinner message="Checking authentication session..." />
   }
 
   if (!isAuthenticated) {

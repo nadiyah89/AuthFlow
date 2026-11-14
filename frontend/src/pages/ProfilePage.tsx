@@ -28,54 +28,56 @@ export const ProfilePage: React.FC = () => {
     <>
       <Navbar />
       <main className={styles.dashboardContainer}>
-        <section className={styles.card}>
-          <div className={styles.profileHeader}>
-            <div className={styles.avatarCircle}>{initials}</div>
-            <div className={styles.profileInfo}>
-              <h1 className={styles.profileName}>{user?.fullName}</h1>
-              <p className={styles.profileEmail}>{user?.email}</p>
-            </div>
-            <div className={styles.badgeSuccess}>
-              <span className={styles.statusDot} />
-              <span>Active Account</span>
-            </div>
-          </div>
-
-          <div className={styles.infoList}>
-            <div className={styles.infoItem}>
-              <span className={styles.infoKey}>Full Name</span>
-              <span className={styles.infoVal}>{user?.fullName}</span>
+        <div className={styles.profileWrapper}>
+          <section className={styles.card}>
+            <div className={styles.profileHeader}>
+              <div className={styles.avatarCircle}>{initials}</div>
+              <div className={styles.profileInfo}>
+                <h1 className={styles.profileName}>{user?.fullName}</h1>
+                <p className={styles.profileEmail}>{user?.email}</p>
+              </div>
+              <div className={styles.badgeSuccessLight}>
+                <span className={styles.statusDot} />
+                <span>Active Account</span>
+              </div>
             </div>
 
-            <div className={styles.infoItem}>
-              <span className={styles.infoKey}>Email Address</span>
-              <span className={styles.infoVal}>{user?.email}</span>
+            <div className={styles.infoList}>
+              <div className={styles.infoItem}>
+                <span className={styles.infoKey}>Full Name</span>
+                <span className={styles.infoVal}>{user?.fullName}</span>
+              </div>
+
+              <div className={styles.infoItem}>
+                <span className={styles.infoKey}>Email Address</span>
+                <span className={styles.infoVal}>{user?.email}</span>
+              </div>
+
+              <div className={styles.infoItem}>
+                <span className={styles.infoKey}>Member Since</span>
+                <span className={styles.infoVal}>{memberSince}</span>
+              </div>
+
+              <div className={styles.infoItem}>
+                <span className={styles.infoKey}>Account Status</span>
+                <span className={styles.infoVal} style={{ color: 'var(--color-success)', fontWeight: 600 }}>
+                  Active Account
+                </span>
+              </div>
+
+              <div className={styles.infoItem}>
+                <span className={styles.infoKey}>Authentication</span>
+                <span className={styles.infoVal}>Password protected</span>
+              </div>
             </div>
 
-            <div className={styles.infoItem}>
-              <span className={styles.infoKey}>Member Since</span>
-              <span className={styles.infoVal}>{memberSince}</span>
+            <div className={styles.actionRow} style={{ marginTop: '1.75rem' }}>
+              <Link to="/dashboard" className={styles.actionBtn}>
+                ← Back to Dashboard
+              </Link>
             </div>
-
-            <div className={styles.infoItem}>
-              <span className={styles.infoKey}>Account Status</span>
-              <span className={styles.infoVal} style={{ color: 'var(--color-success)', fontWeight: 600 }}>
-                Active & Verified
-              </span>
-            </div>
-
-            <div className={styles.infoItem}>
-              <span className={styles.infoKey}>Authentication</span>
-              <span className={styles.infoVal}>Password protected</span>
-            </div>
-          </div>
-
-          <div className={styles.actionRow} style={{ marginTop: '1.75rem' }}>
-            <Link to="/dashboard" className={styles.actionBtn}>
-              ← Back to Dashboard
-            </Link>
-          </div>
-        </section>
+          </section>
+        </div>
       </main>
     </>
   )
