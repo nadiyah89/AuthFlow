@@ -5,9 +5,10 @@ A modern, full-stack authentication web application demonstrating industry-stand
 ## Tech Stack
 
 - **Backend**: ASP.NET Core Web API (.NET 10, C#)
-- **Data Access**: Entity Framework Core 10, Npgsql (PostgreSQL)
+- **Data Access**: Entity Framework Core 10, Npgsql (PostgreSQL 17)
+- **Password Security**: ASP.NET Core Identity `PasswordHasher<User>` (PBKDF2 with HMAC-SHA512)
 - **Frontend**: React 19, TypeScript, Vite, React Router, Native Fetch API, CSS Modules
-- **Authentication**: JWT access tokens in memory + HttpOnly refresh-token cookies
+- **Authentication Strategy**: Short-lived in-memory JWT Access Tokens + Secure HttpOnly Refresh-Token Cookies
 - **Hosting Targets**: Render (Backend), Vercel (Frontend), Managed PostgreSQL (Database)
 
 ---
@@ -18,16 +19,19 @@ A modern, full-stack authentication web application demonstrating industry-stand
 AuthFlow/
 ├── backend/
 │   ├── AuthFlow.slnx
-│   └── src/
-│       └── AuthFlow.Api/
-│           ├── Controllers/          # API endpoints (Health, Auth)
-│           ├── Data/                 # EF Core DbContext & Migrations
-│           ├── DTOs/                 # Request & Response Contracts
-│           ├── Middleware/           # Global Error Handling & Rate Limiting
-│           ├── Models/               # Domain Entities (User, RefreshToken)
-│           ├── Services/             # Auth, Token, and Hashing Services
-│           ├── appsettings.json      # Base Configuration
-│           └── Program.cs            # ASP.NET Core App Bootstrap
+│   ├── src/
+│   │   └── AuthFlow.Api/
+│   │       ├── Controllers/          # API endpoints (Health, Auth)
+│   │       ├── Data/                 # EF Core DbContext & Migrations
+│   │       │   └── Migrations/       # 20261114134401_InitialCreate.cs
+│   │       ├── DTOs/                 # Request & Response Contracts
+│   │       ├── Middleware/           # Global Error Handling & Rate Limiting
+│   │       ├── Models/               # Domain Entities (User, RefreshToken)
+│   │       ├── Services/             # Auth, Token, and Hashing Services
+│   │       ├── appsettings.json      # Base Configuration
+│   │       └── Program.cs            # ASP.NET Core App Bootstrap
+│   └── tests/
+│       └── AuthFlow.IntegrationTests/# Live PostgreSQL integration test suite
 ├── frontend/
 │   ├── src/
 │   │   ├── components/           # Reusable UI & Route Guards
@@ -40,18 +44,38 @@ AuthFlow/
 │   ├── vite.config.ts            # Vite config with local /api dev proxy
 │   └── vercel.json               # Production reverse-proxy rewrites
 ├── docs/
-│   └── ARCHITECTURE.md           # Detailed Architectural Design
+│   └── ARCHITECTURE.md           # Detailed Architectural Design & Learning Guide
 └── .gitignore                    # Comprehensive Exclusion Rules
 ```
 
 ---
 
-## Local Development Setup
+## Database Management & Migrations
 
-### Prerequisites
-- .NET 10 SDK
-- Node.js (v20+) and npm
-- PostgreSQL 17
+Migrations are controlled explicitly via the .NET EF CLI (not executed automatically on generic application startup):
+
+```bash
+# Add a new migration (when models change)
+dotnet ef migrations add <MigrationName> --project src/AuthFlow.Api
+
+# Apply migrations to database
+dotnet ef database update --project src/AuthFlow.Api
+```
+
+---
+
+## Running Integration Tests
+
+AuthFlow includes integration tests that verify database constraints, unique indexes, cascading deletes, and UTC timestamps against live PostgreSQL:
+
+```bash
+cd backend
+dotnet test
+```
+
+---
+
+## Local Development Setup
 
 ### 1. Backend Setup
 ```bash
@@ -75,12 +99,12 @@ The frontend dev server starts on `http://localhost:5173` with automatic `/api` 
 
 ---
 
-## Current Status
+## Progress Status
 
 - **Phase 0 (Architecture & Discovery)**: Complete & Approved.
-- **Phase 1 (Workspace & Foundation)**: Complete.
-  - Git initialized with strict `.gitignore`.
-  - Backend project (.NET 10) created with EF Core 10 + Npgsql dependencies.
-  - Frontend project (React + TS + Vite) scaffolded with `react-router-dom` and local proxy.
-  - PostgreSQL port 5432 connectivity verified.
-  - Health endpoint `/api/health` tested and operational.
+- **Phase 1 (Workspace & Foundation)**: Complete & Approved.
+- **Phase 2 (Database Modeling & Migrations)**: Complete.
+  - Entities defined: `User` and `RefreshToken`.
+  - `AppDbContext` configured with Npgsql and Fluent API constraints.
+  - `InitialCreate` migration generated, reviewed, and applied to `authflow_dev`.
+  - All 6 integration tests passing against live PostgreSQL.

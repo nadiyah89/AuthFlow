@@ -2,4 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/AuthFlow.Api/AuthFlow.Api.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AuthFlow.IntegrationTests/AuthFlow.IntegrationTests.csproj" />
+  </Folder>
 </Solution>

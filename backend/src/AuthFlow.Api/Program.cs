@@ -1,7 +1,22 @@
+using AuthFlow.Api.Data;
+using AuthFlow.Api.Models;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container
 builder.Services.AddControllers();
+
+// Configure EF Core with PostgreSQL
+builder.Services.AddDbContext<AppDbContext>(options =>
+{
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    options.UseNpgsql(connectionString);
+});
+
+// Configure ASP.NET Core Identity Password Hasher
+builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 
 // Configure CORS for local development
 const string corsPolicy = "AllowFrontend";
