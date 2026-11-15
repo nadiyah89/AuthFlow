@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AuthFlow — Token Refresh Verification Harness</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #334155;
+      --pass: #22c55e;
+      --pass-bg: rgba(34, 197, 94, 0.15);
+      --fail: #ef4444;
+      --fail-bg: rgba(239, 68, 68, 0.15);
+      --running: #3b82f6;
+      --running-bg: rgba(59, 130, 246, 0.15);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 2rem 1rem; line-height: 1.5; }
+    .container { max-width: 800px; margin: 0 auto; }
+    header { margin-bottom: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; }
+    h1 { font-size: 1.6rem; font-weight: 700; color: #ffffff; margin-bottom: 0.5rem; }
+    p.subtitle { color: var(--text-muted); font-size: 0.95rem; }
+    .card { background-color: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .stage-item { display: flex; align-items: flex-start; justify-content: space-between; padding: 1rem; border-radius: 6px; background-color: rgba(15, 23, 42, 0.6); border: 1px solid var(--border); margin-bottom: 0.75rem; gap: 1rem; }
+    .stage-info { flex: 1; }
+    .stage-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.25rem; }
+    .stage-desc { font-size: 0.85rem; color: var(--text-muted); }
+    .badge { font-size: 0.75rem; font-weight: 700; padding: 0.3rem 0.65rem; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+    .badge-pending { background-color: rgba(148, 163, 184, 0.15); color: var(--text-muted); border: 1px solid var(--border); }
+    .badge-running { background-color: var(--running-bg); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); }
+    .badge-pass { background-color: var(--pass-bg); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4); }
+    .badge-fail { background-color: var(--fail-bg); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+    .actions { display: flex; gap: 1rem; margin-top: 1.5rem; }
+    button { background-color: #4f46e5; color: #ffffff; border: none; padding: 0.75rem 1.5rem; font-size: 0.95rem; font-weight: 600; border-radius: 6px; cursor: pointer; transition: background-color 0.15s ease; }
+    button:hover:not(:disabled) { background-color: #4338ca; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .log-container { background-color: #0b1120; border: 1px solid var(--border); border-radius: 6px; padding: 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; color: #cbd5e1; max-height: 250px; overflow-y: auto; white-space: pre-wrap; }
+    .log-line { margin-bottom: 0.35rem; }
+    .log-time { color: var(--text-muted); }
+    .log-pass { color: #4ade80; }
+    .log-fail { color: #f87171; }
+    .log-info { color: #38bdf8; }
+    .instructions { font-size: 0.85rem; color: var(--text-muted); margin-top: 1rem; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>AuthFlow — ApiClient Token Refresh Verification</h1>
+      <p class="subtitle">Live browser test of the in-memory access token lifecycle, 401 interception, and silent request replay.</p>
+    </header>
+
+    <main class="card">
+      <div id="stage-1" class="stage-item">
+        <div class="stage-info">
+          <div class="stage-title">Stage 1: User Registration via ApiClient</div>
+          <div class="stage-desc">Registers a dedicated test account and receives an in-memory access token and HttpOnly refresh cookie.</div>
+        </div>
+        <span id="badge-1" class="badge badge-pending">PENDING</span>
+      </div>
+
+      <div id="stage-2" class="stage-item">
+        <div class="stage-info">
+          <div class="stage-title">Stage 2: Initial Protected Call (GET /api/auth/me)</div>
+          <div class="stage-desc">Calls protected profile endpoint using the valid initial in-memory Bearer token. Expects HTTP 200.</div>
+        </div>
+        <span id="badge-2" class="badge badge-pending">PENDING</span>
+      </div>
+
+      <div id="stage-3" class="stage-item">
+        <div class="stage-info">
+          <div class="stage-title">Stage 3: Invalidate In-Memory Access Token</div>
+          <div class="stage-desc">Simulates expired access token by replacing in-memory token with invalid string. Refresh cookie is untouched.</div>
+        </div>
+        <span id="badge-3" class="badge badge-pending">PENDING</span>
+      </div>
+
+      <div id="stage-4" class="stage-item">
+        <div class="stage-info">
+          <div class="stage-title">Stage 4: 401 Interception, Silent Refresh & Replay</div>
+          <div class="stage-desc">Calls GET /api/auth/me. Receives 401, automatically calls POST /api/auth/refresh, rotates token, and replays request to 200.</div>
+        </div>
+        <span id="badge-4" class="badge badge-pending">PENDING</span>
+      </div>
+
+      <div id="stage-5" class="stage-item">
+        <div class="stage-info">
+          <div class="stage-title">Stage 5: Session Cleanup (POST /api/auth/logout)</div>
+          <div class="stage-desc">Revokes active session on server, purges local in-memory token, and clears the HttpOnly cookie.</div>
+        </div>
+        <span id="badge-5" class="badge badge-pending">PENDING</span>
+      </div>
+
+      <div class="actions">
+        <button id="run-btn" type="button">Run Live Verification</button>
+      </div>
+    </main>
+
+    <section class="card">
+      <h2 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.75rem;">Execution Log</h2>
+      <div id="log-box" class="log-container">Ready. Click "Run Live Verification" or view Network tab.</div>
+      <div class="instructions">
+        <strong>How to observe in DevTools:</strong>
+        <br/>1. Press <code>F12</code> to open DevTools, select the <strong>Network</strong> tab, and filter by <code>/api/auth</code>.
+        <br/>2. Run the test and observe: <code>GET /me</code> (401) &rarr; <code>POST /refresh</code> (200) &rarr; <code>GET /me</code> (200).
+      </div>
+    </section>
+  </div>
+
+  <script type="module">
+    import { api } from '/src/services/api.ts';
+
+    const logBox = document.getElementById('log-box');
+    const runBtn = document.getElementById('run-btn');
+
+    function log(message, type = 'info') {
+      const time = new Date().toLocaleTimeString();
+      const div = document.createElement('div');
+      div.className = 'log-line';
+      let typeClass = 'log-info';
+      if (type === 'pass') typeClass = 'log-pass';
+      if (type === 'fail') typeClass = 'log-fail';
+      div.innerHTML = `<span class="log-time">[${time}]</span> <span class="${typeClass}">${message}</span>`;
+      logBox.appendChild(div);
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function setBadge(stageNum, status, text) {
+      const badge = document.getElementById(`badge-${stageNum}`);
+      badge.className = `badge badge-${status}`;
+      badge.textContent = text;
+    }
+
+    async function runVerification() {
+      runBtn.disabled = true;
+      logBox.innerHTML = '';
+      log('Starting AuthFlow ApiClient Token Refresh Verification...', 'info');
+
+      // Reset badges
+      for (let i = 1; i <= 5; i++) {
+        setBadge(i, 'pending', 'PENDING');
+      }
+
+      const testEmail = `test-harness-${Date.now()}@example.com`;
+      const testPassword = 'P@ssword123!Secure';
+
+      try {
+        // --- Stage 1: Registration ---
+        setBadge(1, 'running', 'RUNNING');
+        log('Stage 1: Registering dedicated test user...', 'info');
+
+        const regResponse = await api.register({
+          fullName: 'Test Harness User',
+          email: testEmail,
+          password: testPassword,
+          confirmPassword: testPassword,
+        });
+
+        if (!regResponse || !regResponse.user || regResponse.user.email !== testEmail) {
+          throw new Error('Registration response did not return expected user profile.');
+        }
+        if (!api.getAccessToken()) {
+          throw new Error('Access token was not stored in ApiClient memory after registration.');
+        }
+
+        setBadge(1, 'pass', 'PASSED');
+        log('Stage 1 PASSED: User registered successfully. In-memory token populated.', 'pass');
+
+        // --- Stage 2: Initial Protected Call ---
+        setBadge(2, 'running', 'RUNNING');
+        log('Stage 2: Calling GET /api/auth/me with initial access token...', 'info');
+
+        const initialProfile = await api.getMe();
+        if (!initialProfile || initialProfile.email !== testEmail) {
+          throw new Error('Initial profile fetch did not match registered email.');
+        }
+
+        setBadge(2, 'pass', 'PASSED');
+        log('Stage 2 PASSED: Initial GET /api/auth/me returned HTTP 200 with valid profile.', 'pass');
+
+        // --- Stage 3: Invalidate In-Memory Access Token ---
+        setBadge(3, 'running', 'RUNNING');
+        log('Stage 3: Invalidating in-memory access token (refresh cookie remains untouched)...', 'info');
+
+        const invalidToken = 'simulated.expired.access.token';
+        api.setAccessToken(invalidToken);
+
+        if (api.getAccessToken() !== invalidToken) {
+          throw new Error('Failed to set simulated invalid token in ApiClient memory.');
+        }
+
+        setBadge(3, 'pass', 'PASSED');
+        log('Stage 3 PASSED: In-memory token set to invalid string. Refresh cookie intact in browser.', 'pass');
+
+        // --- Stage 4: 401 Interception, Silent Refresh & Replay ---
+        setBadge(4, 'running', 'RUNNING');
+        log('Stage 4: Calling GET /api/auth/me (expecting 401 -> silent refresh -> replay -> 200)...', 'info');
+
+        // This call will send the invalid token, receive 401, trigger refreshTokenSingleFlight(),
+        // rotate tokens with the backend, update memory, and replay the request.
+        const recoveredProfile = await api.getMe();
+
+        if (!recoveredProfile || recoveredProfile.email !== testEmail) {
+          throw new Error('Recovered profile does not match test user email.');
+        }
+
+        const freshToken = api.getAccessToken();
+        if (!freshToken || freshToken === invalidToken) {
+          throw new Error('Access token in memory was not refreshed with a new valid token.');
+        }
+
+        setBadge(4, 'pass', 'PASSED');
+        log('Stage 4 PASSED: Interceptor caught 401, refreshed token via HttpOnly cookie, and replayed to HTTP 200.', 'pass');
+
+        // --- Stage 5: Session Cleanup ---
+        setBadge(5, 'running', 'RUNNING');
+        log('Stage 5: Calling POST /api/auth/logout to clean up session and revoke refresh token...', 'info');
+
+        await api.logout();
+
+        if (api.getAccessToken() !== null) {
+          throw new Error('Access token was not cleared from memory after logout.');
+        }
+
+        setBadge(5, 'pass', 'PASSED');
+        log('Stage 5 PASSED: Session revoked cleanly on server and memory cleared.', 'pass');
+
+        log('====================================================', 'pass');
+        log('🎉 ALL 5 TEST STAGES PASSED SUCCESSFULLY! 🎉', 'pass');
+        log('====================================================', 'pass');
+      } catch (err) {
+        log(`VERIFICATION FAILED: ${err.message}`, 'fail');
+        console.error('Test harness failure:', err);
+      } finally {
+        runBtn.disabled = false;
+      }
+    }
+
+    runBtn.addEventListener('click', runVerification);
+
+    // Auto-run when opened
+    runVerification();
+  </script>
+</body>
+</html>

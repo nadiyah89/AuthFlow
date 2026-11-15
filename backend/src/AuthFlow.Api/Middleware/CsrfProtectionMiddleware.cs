@@ -18,7 +18,8 @@ public class CsrfProtectionMiddleware
     public CsrfProtectionMiddleware(
         RequestDelegate next,
         ILogger<CsrfProtectionMiddleware> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IWebHostEnvironment environment)
     {
         _next = next;
         _logger = logger;
@@ -26,14 +27,21 @@ public class CsrfProtectionMiddleware
         var configuredOrigins = configuration.GetSection("CorsSettings:AllowedOrigins").Get<string[]>()
             ?? Array.Empty<string>();
 
-        _allowedOrigins = new HashSet<string>(configuredOrigins, StringComparer.OrdinalIgnoreCase)
+        var origins = new HashSet<string>(
+            configuredOrigins.Where(o => !string.IsNullOrWhiteSpace(o)).Select(o => o.Trim().TrimEnd('/')),
+            StringComparer.OrdinalIgnoreCase);
+
+        // In development, automatically allow local development origins
+        if (environment.IsDevelopment())
         {
-            "http://localhost:5173",
-            "http://localhost:5202",
-            "https://localhost:7034",
-            "http://127.0.0.1:5173",
-            "http://127.0.0.1:5202"
-        };
+            origins.Add("http://localhost:5173");
+            origins.Add("http://localhost:5202");
+            origins.Add("https://localhost:7034");
+            origins.Add("http://127.0.0.1:5173");
+            origins.Add("http://127.0.0.1:5202");
+        }
+
+        _allowedOrigins = origins;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -62,18 +70,18 @@ public class CsrfProtectionMiddleware
             var originHeader = context.Request.Headers.Origin.FirstOrDefault();
             var refererHeader = context.Request.Headers.Referer.FirstOrDefault();
 
-            string? incomingOrigin = null;
+            string? rawOriginCandidate = null;
 
             if (!string.IsNullOrWhiteSpace(originHeader))
             {
-                incomingOrigin = originHeader.TrimEnd('/');
+                rawOriginCandidate = originHeader.Trim();
             }
-            else if (!string.IsNullOrWhiteSpace(refererHeader) && Uri.TryCreate(refererHeader, UriKind.Absolute, out var refererUri))
+            else if (!string.IsNullOrWhiteSpace(refererHeader))
             {
-                incomingOrigin = $"{refererUri.Scheme}://{refererUri.Authority}".TrimEnd('/');
+                rawOriginCandidate = refererHeader.Trim();
             }
 
-            if (string.IsNullOrWhiteSpace(incomingOrigin))
+            if (string.IsNullOrWhiteSpace(rawOriginCandidate))
             {
                 _logger.LogWarning("CSRF validation rejected: Missing Origin and Referer header on {Path}", path);
                 await WriteProblemResponseAsync(context, StatusCodes.Status403Forbidden,
@@ -82,15 +90,25 @@ public class CsrfProtectionMiddleware
                 return;
             }
 
-            // Also allow same-origin requests where incoming origin matches Host
-            var hostHeader = context.Request.Host.Value;
-            var isSameHost = !string.IsNullOrEmpty(hostHeader) && incomingOrigin.EndsWith(hostHeader, StringComparison.OrdinalIgnoreCase);
-
-            var isTrustedOrigin = _allowedOrigins.Contains(incomingOrigin) || isSameHost;
-
-            if (!isTrustedOrigin)
+            if (!Uri.TryCreate(rawOriginCandidate, UriKind.Absolute, out var parsedOriginUri) ||
+                (parsedOriginUri.Scheme != Uri.UriSchemeHttp && parsedOriginUri.Scheme != Uri.UriSchemeHttps))
             {
-                _logger.LogWarning("CSRF validation rejected: Untrusted origin '{Origin}' on {Path}", incomingOrigin, path);
+                _logger.LogWarning("CSRF validation rejected: Malformed Origin/Referer header '{Header}' on {Path}", rawOriginCandidate, path);
+                await WriteProblemResponseAsync(context, StatusCodes.Status403Forbidden,
+                    "CSRF Validation Failed",
+                    "Invalid Origin or Referer browser security header.");
+                return;
+            }
+
+            var canonicalOrigin = $"{parsedOriginUri.Scheme}://{parsedOriginUri.Authority}".TrimEnd('/');
+
+            // Check against configured allowed origins, or verify exact same-origin
+            var isExplicitlyAllowed = _allowedOrigins.Contains(canonicalOrigin);
+            var isSameOrigin = IsSameOrigin(parsedOriginUri, context.Request);
+
+            if (!isExplicitlyAllowed && !isSameOrigin)
+            {
+                _logger.LogWarning("CSRF validation rejected: Untrusted origin '{Origin}' on {Path}", canonicalOrigin, path);
                 await WriteProblemResponseAsync(context, StatusCodes.Status403Forbidden,
                     "CSRF Validation Failed",
                     "The request origin is not authorized.");
@@ -99,6 +117,40 @@ public class CsrfProtectionMiddleware
         }
 
         await _next(context);
+    }
+
+    private static bool IsSameOrigin(Uri originUri, HttpRequest request)
+    {
+        // 1. Strict Host check (exact case-insensitive match, preventing suffix injection attacks)
+        if (!string.Equals(originUri.Host, request.Host.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // 2. Port check (accounting for default HTTP 80 / HTTPS 443 ports)
+        var requestPort = request.Host.Port ?? (string.Equals(request.Scheme, "https", StringComparison.OrdinalIgnoreCase) ? 443 : 80);
+        var originPort = originUri.IsDefaultPort
+            ? (string.Equals(originUri.Scheme, "https", StringComparison.OrdinalIgnoreCase) ? 443 : 80)
+            : originUri.Port;
+
+        if (requestPort != originPort)
+        {
+            return false;
+        }
+
+        // 3. Scheme check (allow HTTP/HTTPS divergence strictly on local development hosts)
+        if (!string.Equals(originUri.Scheme, request.Scheme, StringComparison.OrdinalIgnoreCase))
+        {
+            var isLocalhost = request.Host.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+                              request.Host.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase);
+
+            if (!isLocalhost)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static Task WriteProblemResponseAsync(HttpContext context, int statusCode, string title, string detail)

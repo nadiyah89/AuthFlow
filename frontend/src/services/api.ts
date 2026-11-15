@@ -6,15 +6,32 @@ import type {
   UserProfile,
 } from '../types/auth.types'
 
+function sanitizeErrorMessage(message?: string): string | undefined {
+  if (!message) return undefined
+  const trimmed = message.trim()
+  if (trimmed.startsWith('<') || trimmed.includes('<!DOCTYPE') || trimmed.includes('<html')) {
+    return 'The server is currently unavailable or returned an unreadable response. Please try again.'
+  }
+  // Strip any embedded HTML tags if present
+  const stripped = trimmed.replace(/<[^>]*>?/gm, '').trim()
+  return stripped.length > 0 ? stripped : undefined
+}
+
 export class ApiError extends Error {
   public status: number
   public problem: ApiProblemDetails
 
   constructor(status: number, problem: ApiProblemDetails) {
-    super(problem.detail || problem.title || `API error with status ${status}`)
+    const cleanDetail = sanitizeErrorMessage(problem.detail)
+    const cleanTitle = sanitizeErrorMessage(problem.title)
+    super(cleanDetail || cleanTitle || `Request failed with status ${status}`)
     this.name = 'ApiError'
     this.status = status
-    this.problem = problem
+    this.problem = {
+      ...problem,
+      detail: cleanDetail || problem.detail,
+      title: cleanTitle || problem.title,
+    }
   }
 
   public get validationErrors(): Record<string, string[]> | undefined {
@@ -43,6 +60,23 @@ class ApiClient {
     const contentType = response.headers.get('content-type') || ''
     let problem: ApiProblemDetails
 
+    const getStatusFallbackMessage = (status: number): string => {
+      switch (status) {
+        case 429:
+          return 'Too many requests. Please slow down and try again later.'
+        case 502:
+          return 'The backend server is starting up or temporarily unreachable. Please retry in a few moments.'
+        case 503:
+          return 'The service is temporarily unavailable. Please try again shortly.'
+        case 504:
+          return 'The server took too long to respond. Please try again in a few moments.'
+        case 500:
+          return 'An unexpected server error occurred. Please try again later.'
+        default:
+          return response.statusText || 'An unexpected error occurred. Please try again.'
+      }
+    }
+
     if (contentType.includes('application/json') || contentType.includes('application/problem+json')) {
       try {
         problem = (await response.json()) as ApiProblemDetails
@@ -50,15 +84,28 @@ class ApiClient {
         problem = {
           status: response.status,
           title: response.statusText || 'Error',
-          detail: 'Failed to parse error response from server.',
+          detail: 'Failed to parse response from server.',
         }
       }
     } else {
-      const text = await response.text().catch(() => '')
+      const rawText = (await response.text().catch(() => '')).trim()
+      const isHtml =
+        contentType.includes('text/html') ||
+        rawText.startsWith('<') ||
+        rawText.includes('<!DOCTYPE') ||
+        rawText.includes('<html')
+
+      // Never expose raw HTML or gateway error pages to the user
+      const detail = isHtml || !rawText
+        ? getStatusFallbackMessage(response.status)
+        : rawText.length > 250
+          ? getStatusFallbackMessage(response.status)
+          : rawText
+
       problem = {
         status: response.status,
         title: response.statusText || 'Error',
-        detail: text || 'An unexpected server error occurred.',
+        detail,
       }
     }
 

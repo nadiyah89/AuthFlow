@@ -34,6 +34,7 @@ The application follows a clean 3-tier monolithic layered architecture on the ba
 │  [Presentation Layer: Controllers]                     │
 │  - AuthController (Register, Login, Refresh, Logout,   │
 │    Me)                                                 │
+│  - HealthController (Health Check)                     │
 │                                                        │
 │  [Business Layer: Services]                            │
 │  - IAuthService / AuthService                          │
@@ -124,4 +125,23 @@ AuthFlow uses the browser's `BroadcastChannel` API (`authflow_session_channel`).
 | **Refresh Token** | Browser Cookie (`HttpOnly; Secure; SameSite=Lax; Path=/api/auth`) | **No** | Mitigates XSS script inspection; strictly scoped to `/api/auth`. |
 | **Refresh Token in DB** | SHA-256 Hash in `RefreshTokens.TokenHash` | N/A | Raw tokens never touch database tables. |
 | **Passwords** | `Users.PasswordHash` (PBKDF2 HMAC-SHA512) | N/A | Salted and hashed with 100,000+ iterations. |
-| **CSRF Defense** | Header `X-Requested-With` + Origin validation | N/A | Rejects unauthorized cross-origin state changes. |
+| **CSRF Defense** | Header `X-Requested-With` + Strict Origin matching | N/A | Rejects unauthorized cross-origin state changes; forbids suffix-based origin attacks. |
+
+---
+
+## 6. Production Deployment & Cold-Start Resilience
+
+### Production CORS & CSRF Configuration
+In production environments (e.g., Render backend + Vercel frontend), allowed origins must be supplied via environment variables without hardcoding secrets:
+- **Render Dashboard Environment Variable:**
+  `CorsSettings__AllowedOrigins__0 = https://your-app.vercel.app`
+- In ASP.NET Core, this configures `CorsSettings:AllowedOrigins` array index 0.
+- `CsrfProtectionMiddleware` and `Program.cs` automatically load and enforce these origins, requiring exact scheme, hostname, and port matches (preventing DNS suffix attacks such as `attacker-yourapp.vercel.app`).
+- In local development (`ASPNETCORE_ENVIRONMENT=Development`), local dev ports (`http://localhost:5173`, `http://localhost:5202`, etc.) are automatically trusted.
+
+### Render Free-Tier Cold-Start Handling
+When a free-tier Render container spins down after inactivity, initial requests may receive an HTTP 502 Bad Gateway or 504 Gateway Timeout while the instance starts up:
+- The frontend `ApiClient` intercepts non-JSON and HTML responses.
+- Raw HTML error pages are sanitized and mapped to a readable user-facing message:
+  `"The backend server is starting up or temporarily unreachable. Please retry in a few moments."`
+- Raw HTML is never exposed to users or injected into error banners.

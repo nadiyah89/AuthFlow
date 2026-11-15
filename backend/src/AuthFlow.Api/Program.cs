@@ -95,13 +95,30 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy(corsPolicy, policy =>
     {
-        var allowedOrigins = builder.Configuration.GetSection("CorsSettings:AllowedOrigins").Get<string[]>()
-            ?? new[] { "http://localhost:5173" };
+        var configuredOrigins = builder.Configuration.GetSection("CorsSettings:AllowedOrigins").Get<string[]>()
+            ?? Array.Empty<string>();
 
-        policy.WithOrigins(allowedOrigins)
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
+        var allowedOrigins = new HashSet<string>(
+            configuredOrigins.Where(o => !string.IsNullOrWhiteSpace(o)).Select(o => o.Trim().TrimEnd('/')),
+            StringComparer.OrdinalIgnoreCase);
+
+        // In development, automatically allow local development origins
+        if (builder.Environment.IsDevelopment())
+        {
+            allowedOrigins.Add("http://localhost:5173");
+            allowedOrigins.Add("http://localhost:5202");
+            allowedOrigins.Add("https://localhost:7034");
+            allowedOrigins.Add("http://127.0.0.1:5173");
+            allowedOrigins.Add("http://127.0.0.1:5202");
+        }
+
+        if (allowedOrigins.Count > 0)
+        {
+            policy.WithOrigins(allowedOrigins.ToArray())
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
     });
 });
 

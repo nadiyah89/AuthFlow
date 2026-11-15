@@ -78,11 +78,13 @@ export const RegisterPage: React.FC = () => {
       if (err instanceof ApiError) {
         if (err.status === 409) {
           setGeneralError('An account with this email address already exists.')
-        } else if (err.validationErrors) {
+        } else if (err.validationErrors && Object.keys(err.validationErrors).length > 0) {
           const apiFieldErrors: Record<string, string> = {}
           for (const [key, msgs] of Object.entries(err.validationErrors)) {
             const normalizedKey = key.charAt(0).toLowerCase() + key.slice(1)
-            apiFieldErrors[normalizedKey] = msgs[0]
+            if (msgs && msgs.length > 0) {
+              apiFieldErrors[normalizedKey] = msgs[0]
+            }
           }
           setFieldErrors(apiFieldErrors)
         } else {

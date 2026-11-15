@@ -166,4 +166,88 @@ public class ProtectedEndpointsAndCsrfHttpTests : IClassFixture<WebApplicationFa
         Assert.NotNull(newCookie);
         Assert.Contains("httponly", newCookie.ToLowerInvariant());
     }
+
+    // 16. CSRF Malicious Hostname Suffix Rejection (Defends against suffix bypass vulnerabilities)
+    [Fact]
+    public async Task Csrf_Malicious_Hostname_Suffix_Rejection_Returns_403_Forbidden()
+    {
+        var (_, rawCookie, _) = await RegisterTestUserAsync("csrf-suffix-attack");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/refresh");
+        request.Headers.Add("Cookie", rawCookie);
+        request.Headers.Add("X-Requested-With", "XMLHttpRequest");
+        // Malicious origin attempting to exploit suffix matching on localhost
+        request.Headers.Add("Origin", "http://attacker-localhost");
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("CSRF Validation Failed", problem.Title);
+        Assert.Contains("not authorized", problem.Detail);
+    }
+
+    // 17. CSRF Malformed Origin URI Rejection
+    [Fact]
+    public async Task Csrf_Malformed_Origin_Header_Returns_403_Forbidden()
+    {
+        var (_, rawCookie, _) = await RegisterTestUserAsync("csrf-malformed");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/refresh");
+        request.Headers.Add("Cookie", rawCookie);
+        request.Headers.Add("X-Requested-With", "XMLHttpRequest");
+        request.Headers.Add("Origin", "not-a-valid-absolute-uri");
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("CSRF Validation Failed", problem.Title);
+    }
+
+    // 18. Configured Production Origin Allowed via Configuration
+    [Fact]
+    public async Task Csrf_Configured_Production_Origin_Succeeds()
+    {
+        var productionOrigin = "https://authflow-app.vercel.app";
+
+        var customFactory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("CorsSettings:AllowedOrigins:0", productionOrigin);
+        });
+
+        var customClient = customFactory.CreateClient();
+
+        // Register user via custom client
+        var email = $"prod-origin-{Guid.NewGuid():N}@example.com";
+        var regResponse = await customClient.PostAsJsonAsync("/api/auth/register", new RegisterRequestDto
+        {
+            FullName = "Production Origin User",
+            Email = email,
+            Password = "P@ssword123!Secure",
+            ConfirmPassword = "P@ssword123!Secure"
+        });
+
+        Assert.Equal(HttpStatusCode.Created, regResponse.StatusCode);
+        var authResponse = await regResponse.Content.ReadFromJsonAsync<AuthResponseDto>();
+        _createdUserIds.Add(authResponse!.User.Id);
+
+        var cookieHeader = regResponse.Headers.GetValues("Set-Cookie").First(c => c.StartsWith("refreshToken="));
+        var rawCookie = cookieHeader.Split(';')[0];
+
+        // Send refresh with production origin
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/refresh");
+        request.Headers.Add("Cookie", rawCookie);
+        request.Headers.Add("X-Requested-With", "XMLHttpRequest");
+        request.Headers.Add("Origin", productionOrigin);
+
+        var refreshResponse = await customClient.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, refreshResponse.StatusCode);
+        var refreshResult = await refreshResponse.Content.ReadFromJsonAsync<AuthResponseDto>();
+        Assert.NotNull(refreshResult);
+        Assert.False(string.IsNullOrWhiteSpace(refreshResult.AccessToken));
+    }
 }

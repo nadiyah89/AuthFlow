@@ -7,7 +7,6 @@ import { DashboardPage } from './pages/DashboardPage'
 import { LoginPage } from './pages/LoginPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { RegisterPage } from './pages/RegisterPage'
-import './styles/global.css'
 
 export const App: React.FC = () => {
   return (

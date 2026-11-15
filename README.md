@@ -66,7 +66,40 @@ AuthFlow/
 7. Backend validates and rotates the refresh token.
 8. Logout revokes the refresh-token session.
 
+<<<<<<< HEAD
 ## Local Setup
+=======
+1. **User Registration**:
+   - Full name, email, password, and password confirmation.
+   - Client-side validation with real-time password requirement checklist.
+   - Case-insensitive duplicate email detection.
+   - Server-side validation with RFC 7807 `ProblemDetails`.
+   - PBKDF2 with HMAC-SHA512 password hashing.
+   - Automatic post-registration login with immediate dashboard redirection.
+2. **User Login**:
+   - Email and password authentication.
+   - Password visibility toggle.
+   - Generic invalid credentials error to mitigate user enumeration.
+   - Account lockout protection after 5 consecutive failed attempts (15-minute lockout).
+   - Inactive account handling.
+3. **Session Management & Refresh Tokens**:
+   - Short-lived JWT Access Tokens (15 mins) kept exclusively in frontend memory.
+   - Zero tokens stored in `localStorage` or `sessionStorage`.
+   - Cryptographically random 64-byte Refresh Tokens in `HttpOnly; Secure; SameSite=Lax; Path=/api/auth` cookies.
+   - Database stores only SHA-256 hashes of refresh tokens.
+   - Refresh token rotation upon every use with PostgreSQL row-level concurrency protection (`SELECT ... FOR UPDATE`).
+   - Token family lineage tracking with automatic reuse detection (compromised tokens revoke the entire session family).
+   - Single-flight refresh mechanism on the frontend to prevent duplicate refresh calls.
+   - Multi-tab session synchronization via `BroadcastChannel`.
+4. **Protected Routes & Profile**:
+   - `/dashboard` displays authenticated user details, creation date, and session status.
+   - `/profile` displays full verified account information from `/api/auth/me`.
+   - Route guards automatically redirect unauthenticated users to `/login` and authenticated users to `/dashboard`.
+5. **CSRF Protection & Cold-Start Resilience**:
+   - Custom anti-CSRF request header requirement (`X-Requested-With: XMLHttpRequest`).
+   - Strict Origin and Referer validation enforcing exact scheme, host, and port matching (preventing DNS suffix attacks).
+   - Defensive client-side error parsing that sanitizes gateway timeouts and cold-start HTML responses.
+>>>>>>> c99542e (fix: improve auth error handling and CSRF origin validation)
 
 **Backend**
 ```bash

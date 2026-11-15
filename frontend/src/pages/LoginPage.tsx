@@ -59,11 +59,13 @@ export const LoginPage: React.FC = () => {
           setGeneralError(err.message || 'Account is temporarily locked due to repeated failed attempts.')
         } else if (err.status === 403) {
           setGeneralError('This account is inactive. Please contact support.')
-        } else if (err.validationErrors) {
+        } else if (err.validationErrors && Object.keys(err.validationErrors).length > 0) {
           const apiFieldErrors: Record<string, string> = {}
           for (const [key, msgs] of Object.entries(err.validationErrors)) {
             const normalizedKey = key.charAt(0).toLowerCase() + key.slice(1)
-            apiFieldErrors[normalizedKey] = msgs[0]
+            if (msgs && msgs.length > 0) {
+              apiFieldErrors[normalizedKey] = msgs[0]
+            }
           }
           setFieldErrors(apiFieldErrors)
         } else {
