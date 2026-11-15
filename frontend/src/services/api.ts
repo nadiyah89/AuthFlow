@@ -41,7 +41,7 @@ export class ApiError extends Error {
 
 class ApiClient {
   private accessToken: string | null = null
-  private refreshPromise: Promise<string | null> | null = null
+  private refreshPromise: Promise<AuthResponse> | null = null
   private onAuthFailureCallback: (() => void) | null = null
 
   public setAccessToken(token: string | null): void {
@@ -198,16 +198,16 @@ class ApiClient {
 
   /**
    * Single-flight token refresh:
-   * Guarantees that concurrent 401 requests share the exact same refresh promise
+   * Guarantees that concurrent refresh or 401 requests share the exact same refresh promise
    * and never issue duplicate refresh cookie requests.
    */
-  public async refreshTokenSingleFlight(): Promise<string | null> {
+  public async refreshSingleFlight(): Promise<AuthResponse> {
     if (!this.refreshPromise) {
       this.refreshPromise = (async () => {
         try {
           const result = await this.refresh()
           this.accessToken = result.accessToken
-          return result.accessToken
+          return result
         } catch (error) {
           this.accessToken = null
           this.onAuthFailureCallback?.()
@@ -219,6 +219,11 @@ class ApiClient {
     }
 
     return this.refreshPromise
+  }
+
+  public async refreshTokenSingleFlight(): Promise<string | null> {
+    const response = await this.refreshSingleFlight()
+    return response.accessToken
   }
 
   // --- Auth Service API Methods ---

@@ -7,6 +7,79 @@ import type {
   UserProfile,
 } from '../types/auth.types'
 
+type AuthBroadcastEvent =
+  | { type: 'LOGIN'; user: UserProfile }
+  | { type: 'LOGOUT' }
+
+/**
+ * Module-level broadcast channel manager.
+ * Ensures the channel is not prematurely closed during React component
+ * mount/unmount lifecycles, and prevents InvalidStateError on postMessage.
+ */
+class SessionBroadcastManager {
+  private static instance: SessionBroadcastManager | null = null
+  private channel: BroadcastChannel | null = null
+
+  private constructor() {
+    this.init()
+  }
+
+  public static getInstance(): SessionBroadcastManager {
+    if (!SessionBroadcastManager.instance) {
+      SessionBroadcastManager.instance = new SessionBroadcastManager()
+    }
+    return SessionBroadcastManager.instance
+  }
+
+  private init(): void {
+    if (typeof BroadcastChannel === 'undefined') return
+    try {
+      this.channel = new BroadcastChannel('authflow_session_channel')
+    } catch {
+      this.channel = null
+    }
+  }
+
+  public post(message: AuthBroadcastEvent): void {
+    if (typeof BroadcastChannel === 'undefined') return
+
+    try {
+      if (!this.channel) {
+        this.init()
+      }
+      this.channel?.postMessage(message)
+    } catch {
+      // If the channel was in an invalid/closed state, reinitialize and retry safely
+      try {
+        this.init()
+        this.channel?.postMessage(message)
+      } catch {
+        // BroadcastChannel unavailable in this environment; safely ignore
+      }
+    }
+  }
+
+  public subscribe(listener: (message: AuthBroadcastEvent) => void): () => void {
+    if (typeof BroadcastChannel === 'undefined') return () => {}
+
+    if (!this.channel) {
+      this.init()
+    }
+    if (!this.channel) return () => {}
+
+    const onMessage = (event: MessageEvent<AuthBroadcastEvent>) => {
+      if (event.data) {
+        listener(event.data)
+      }
+    }
+
+    this.channel.addEventListener('message', onMessage)
+    return () => {
+      this.channel?.removeEventListener('message', onMessage)
+    }
+  }
+}
+
 export const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -16,14 +89,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const clearError = useCallback(() => setError(null), [])
 
-  // Cross-tab broadcast coordination channel
-  const broadcastChannel = useMemo(() => {
-    return typeof BroadcastChannel !== 'undefined'
-      ? new BroadcastChannel('authflow_session_channel')
-      : null
-  }, [])
-
-  // Initial silent session check on application mount
+  // Initial silent session check and multi-tab listener on mount
   useEffect(() => {
     let isMounted = true
 
@@ -35,21 +101,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     })
 
     // Listen for multi-tab session changes
-    if (broadcastChannel) {
-      broadcastChannel.onmessage = (event) => {
-        if (event.data?.type === 'LOGOUT') {
-          api.setAccessToken(null)
-          if (isMounted) setUser(null)
-        } else if (event.data?.type === 'LOGIN' && event.data.user) {
-          if (isMounted) setUser(event.data.user)
-        }
+    const unsubscribe = SessionBroadcastManager.getInstance().subscribe((message) => {
+      if (!isMounted) return
+      if (message.type === 'LOGOUT') {
+        api.setAccessToken(null)
+        setUser(null)
+      } else if (message.type === 'LOGIN' && message.user) {
+        setUser(message.user)
       }
-    }
+    })
 
     const restoreSession = async () => {
       try {
-        // Attempt silent refresh using HttpOnly cookie
-        const response = await api.refresh()
+        // Attempt silent refresh using the single-flight coalesced refresh mechanism
+        const response = await api.refreshSingleFlight()
         if (isMounted) {
           setUser(response.user)
         }
@@ -69,11 +134,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => {
       isMounted = false
-      if (broadcastChannel) {
-        broadcastChannel.close()
-      }
+      unsubscribe()
     }
-  }, [broadcastChannel])
+  }, [])
 
   const register = useCallback(
     async (data: RegisterRequest) => {
@@ -81,7 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const response = await api.register(data)
         setUser(response.user)
-        broadcastChannel?.postMessage({ type: 'LOGIN', user: response.user })
+        SessionBroadcastManager.getInstance().post({ type: 'LOGIN', user: response.user })
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Registration failed. Please try again.'
@@ -89,7 +152,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw err
       }
     },
-    [broadcastChannel]
+    []
   )
 
   const login = useCallback(
@@ -98,7 +161,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const response = await api.login(data)
         setUser(response.user)
-        broadcastChannel?.postMessage({ type: 'LOGIN', user: response.user })
+        SessionBroadcastManager.getInstance().post({ type: 'LOGIN', user: response.user })
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Login failed. Please try again.'
@@ -106,17 +169,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw err
       }
     },
-    [broadcastChannel]
+    []
   )
 
   const logout = useCallback(async () => {
     try {
+      // Safely broadcast logout to other tabs before server revocation and local state reset
+      SessionBroadcastManager.getInstance().post({ type: 'LOGOUT' })
       await api.logout()
     } finally {
       setUser(null)
-      broadcastChannel?.postMessage({ type: 'LOGOUT' })
     }
-  }, [broadcastChannel])
+  }, [])
 
   const refreshUser = useCallback(async (): Promise<UserProfile | null> => {
     try {
